@@ -56,6 +56,7 @@ package gorace
 
 import (
 	"context"
+	"sync"
 )
 
 // GoCancelable contract
@@ -96,11 +97,20 @@ type goCancelable struct {
 	canceled   bool
 	started    bool
 	lastResult interface{}
+	mu         sync.Mutex
 }
 
 // Cancel closes the send channel and sets the state to canceled
 func (gc *goCancelable) Cancel() bool {
-	if !gc.IsCanceled() {
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
+	return gc.cancel()
+}
+
+// Closes the send channel and sets the state to canceled. Requires locks
+// prior to this method call to remain concurrency-safe.
+func (gc *goCancelable) cancel() bool {
+	if !gc.canceled {
 		gc.canceled = true
 		close(gc.send)
 		return true
@@ -111,14 +121,18 @@ func (gc *goCancelable) Cancel() bool {
 
 // IsCanceled returns true if the cancelable is already canceled otherwise returns false
 func (gc *goCancelable) IsCanceled() bool {
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
 	return gc.canceled
 }
 
 // Send stores the last result and sends the result on the cancelable's channel
 func (gc *goCancelable) Send(result interface{}) {
-	if !gc.IsCanceled() {
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
+	if !gc.canceled {
 		gc.lastResult = result
-		gc.send <- result
+		gc.send <- result // this can block
 	}
 }
 
@@ -130,11 +144,15 @@ func (gc *goCancelable) Receive() <-chan interface{} {
 // Start calls the associated gorace handler if the cancelable has not been canceled or started. If the cancelable
 // is canceled or has already started this call does nothing
 func (gc *goCancelable) Start(ctx context.Context) GoCancelable {
-	if !gc.IsCanceled() && !gc.started {
-		defer gc.Cancel() // Clean up resources after handler is called
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
+	if !gc.canceled && !gc.started {
 		gc.started = true
 		// Call the handler
-		gc.handler(ctx, gc)
+		go func(ctx context.Context, gc *goCancelable) {
+			defer gc.Cancel() // Clean up resources after handler is called
+			gc.handler(ctx, gc)
+		}(ctx, gc)
 	}
 	return gc
 }
@@ -148,5 +166,7 @@ func (gc *goCancelable) StartBackground(ctx context.Context) GoCancelable {
 // LastResult returns the last successful result sent on the cancelable's channel. This does not return
 // values attempted to be sent after the cancelable is canceled
 func (gc *goCancelable) LastResult() interface{} {
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
 	return gc.lastResult
 }
