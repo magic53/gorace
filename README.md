@@ -54,3 +54,13 @@ func work(ctx context.Context) (bool, error) {
         return true, nil
 }
 ```
+
+## See `gorace_test.go` for more examples
+
+## Running tests
+
+Tests require `github.com/stretchr/testify` package
+```
+go get github.com/stretchr/testify
+go test -v github.com/magic53/gorace
+```
