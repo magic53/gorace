@@ -61,6 +61,23 @@ func (suite *GoRaceTestSuite) TestGoRaceCheckForDeadlocks() {
 	suite.Equal(true, cancelable.IsCanceled(), "cancelable.IsCanceled() should be true")
 }
 
+func (suite *GoRaceTestSuite) TestGoRaceCheckForCancelDeadlocks() {
+	cancelable := GoRace(func(ctx context.Context, cancelable GoCancelable) {
+		work(ctx)
+		for i := 0; i < 50; i++ {
+			cancelable.Send(i)
+			cancelable.Cancel()
+		}
+	})
+	cancelable.Start(context.Background())
+
+	for result := range cancelable.Receive() {
+		suite.Equal(0, result, "cancelable.Receive() should be 0 due to cancel immediately after first send")
+	}
+
+	suite.Equal(true, cancelable.IsCanceled(), "cancelable.IsCanceled() should be true")
+}
+
 func (suite *GoRaceTestSuite) TestGoRaceCheckForStartBackgroundPanics() {
 	cancelable := rapidSendCancelable()
 	cancelable.StartBackground(context.Background())
